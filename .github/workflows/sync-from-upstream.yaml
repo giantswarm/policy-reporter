@@ -29,6 +29,6 @@ jobs:
           # Fetch tags from upstream repo
           git fetch https://github.com/kyverno/policy-reporter --tags
           # Remove release candidates local tags
-          git tag -d $(git tag -l | grep -E "\-rc|\-beta|\-dev")
+          git tag -d $(git tag -l | grep -Ei "\-rc|\-beta|\-dev")
           git push --tags
 
