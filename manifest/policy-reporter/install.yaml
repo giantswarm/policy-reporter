@@ -73,12 +73,16 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: policy-reporter
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "8080"
     spec:
       serviceAccountName: policy-reporter
       automountServiceAccountToken: true
       containers:
         - name: policy-reporter
-          image: "ghcr.io/kyverno/policy-reporter:2.11.1"
+          image: "ghcr.io/kyverno/policy-reporter:2.15.2"
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false

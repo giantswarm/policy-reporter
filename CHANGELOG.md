@@ -1,5 +1,100 @@
 # Changelog
 
+# 2.19.2
+* Policy Reporter
+    * Fix mapping of `mountedSecret` for all missing targets
+    * Implement retry for `secretRef` secret fetching
+
+# 2.19.1
+* Policy Reporter
+    * AWS IRSA Authentication Support
+    * Add `source` attribute to JSON ouput [[#311](https://github.com/kyverno/policy-reporter/pull/311) by [nikolay-o](https://github.com/nikolay-o)]
+
+# 2.19.0
+* Policy Reporter
+    * New AWS SecurityHub push target - See [values.yaml](https://github.com/kyverno/policy-reporter/blob/main/charts/policy-reporter/values.yaml#L550) for available configurations
+    * External DB support (PostgreSQL, MySQL, MariaDB) - See [values.yaml](https://github.com/kyverno/policy-reporter/blob/main/charts/policy-reporter/values.yaml#L172) for available configurations
+        * HA Mode support - only leader write into the DB
+        * Versioned Schema, autoupdated when another version is detected
+        * Configurable over values and secrets
+    * Cache improvements to reduce duplicated pushes
+    * Split Category API into namespaced scoped and cluster scoped API
+    * Support search for contained words in the results API
+* Policy Reporter UI
+    * Update API requests
+
+# 2.18.3
+* Policy Reporter
+    * new value to add `priorityClassName` to pods [[#283](https://github.com/kyverno/policy-reporter/pull/283) by [boniek83](https://github.com/boniek83)]
+    * fixed syntax error for policy reporter config.yaml [[#295](https://github.com/kyverno/policy-reporter/pull/295) by [nikolay-o](https://github.com/nikolay-o)]
+    * fixed customFields for kinesis targets [[#295](https://github.com/kyverno/policy-reporter/pull/295) by [nikolay-o](https://github.com/nikolay-o)]
+    * image signing and sbom generation for new Policy Reporter images
+
+# 2.18.2
+
+* Policy Reporter UI
+    * Container signing and SBOM generation
+    * New config `api.overwriteHost` to control the proxy host behavior
+
+# 2.18.1
+
+* Signed Helm Chart
+* Policy Reporter
+    * New `channel` property for Slack targets to define the Slack channel to send the results too
+    * New `mountedSecret` property to read target configs from a mounted secret [[#282](https://github.com/kyverno/policy-reporter/pull/282) by [rromic](https://github.com/rromic)]
+    * AWS KMS support for S3 target with new properties `bucketKeyEnabled`, `kmsKeyId` and `serverSideEncryption` [[#281](https://github.com/kyverno/policy-reporter/pull/281) by [rromic](https://github.com/rromic)]
+        * Mountet secret needs to be in json format with keys defined in kubernetes/secrets Values struct.
+
+* Monitoring
+    * Add `namespaceSelector` to `serviceMonitor` values
+
+# 2.18.0
+* Policy Reporter
+    * Improved logging configuration
+        * Support JSON logging
+        * Support log level
+    * optional API access logging with `api.logging` set to `true`
+    * New aggregation table for API performance improvements
+    * Helm Ingress template
+    * New Google Cloud Storage Target
+        * Requires `credentials` as JSON String and the `bucket` name
+        * Added in the helm valus under `target.gcs`
+* Policy Reporter KyvernoPlugin
+    * Helm Ingress template
+    * Improved logging configuration
+        * Support JSON logging
+        * Support log level
+* Policy Reporter UI
+    * Improved logging configuration
+        * Support JSON logging
+        * Support log level
+        * Proxy Logging
+
+# 2.17.0
+* Policy Reporter
+    * Use metaclient to reduce informer memory usage
+    * Use workerqueue to control concurrent processing of PolicyReports
+    * Remove internal PolicyReport structures
+    * Make sqlite volume configurable [[#255](https://github.com/kyverno/policy-reporter/pull/255) by [monotek](https://github.com/monotek)]
+    * use defer to unlock when possible [[#259](https://github.com/kyverno/policy-reporter/pull/259) by [eddycharly](https://github.com/eddycharly)]
+* Policy Reporter UI
+    * New SSL configs for external clusters
+        * `skipTLS` to disable SSL verification
+        * `certificate` to configure a path to a custom CA for self signed URLs
+    * New Helm values `ui.volumes` and `ui.volumeMounts` to add your custom CAs as mounts to the UI deployment.
+
+# 2.16.0
+* Add `nameOverride` to all charts [[#254](https://github.com/kyverno/policy-reporter/pull/254) by [mjnagel](https://github.com/mjnagel)]
+
+# 2.15.0
+
+* Add values to configure `topologySpreadConstraints` for all components [[#241](https://github.com/kyverno/policy-reporter/pull/241) by [Kostavro](https://github.com/Kostavro)]
+* Fixing comment formats and deprecations [[#250](https://github.com/kyverno/policy-reporter/pull/250) by [fengshunli](https://github.com/fengshunli)]
+* Add new APIs for PolicyReport and ClusterPolicyReport metadata (`/v1/policy-reports`, `/v1/cluster-policy-reports`) [[#251](https://github.com/kyverno/policy-reporter/pull/251)
+* `search` filter also checks the resource kind
+* Use correct probes in core deployment [[#236](https://github.com/kyverno/policy-reporter/pull/236) by [rgarcia89](https://github.com/rgarcia89)]
+* Add source to PolicyReport Table and improve report-label API [[#252](https://github.com/kyverno/policy-reporter/pull/252)
+
 # 2.14.1
 
 * Policy Reporter

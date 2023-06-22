@@ -34,11 +34,23 @@ func Load(cmd *cobra.Command) (*Config, error) {
 	v.AutomaticEnv()
 
 	if err := v.ReadInConfig(); err != nil {
-		log.Println("[INFO] No configuration file found")
+		log.Printf("[INFO] No configuration file found: %v\n", err)
+	}
+
+	if flag := cmd.Flags().Lookup("worker"); flag != nil {
+		v.BindPFlag("worker", flag)
 	}
 
 	if flag := cmd.Flags().Lookup("kubeconfig"); flag != nil {
-		v.BindPFlag("kubeconfig", flag)
+		v.BindPFlag("k8sClient.kubeconfig", flag)
+	}
+
+	if flag := cmd.Flags().Lookup("qps"); flag != nil {
+		v.BindPFlag("k8sClient.qps", flag)
+	}
+
+	if flag := cmd.Flags().Lookup("burst"); flag != nil {
+		v.BindPFlag("k8sClient.burst", flag)
 	}
 
 	if flag := cmd.Flags().Lookup("port"); flag != nil {
@@ -67,6 +79,10 @@ func Load(cmd *cobra.Command) (*Config, error) {
 
 	if flag := cmd.Flags().Lookup("lease-name"); flag != nil {
 		v.BindPFlag("leaderElection.lockName", flag)
+	}
+
+	if flag := cmd.Flags().Lookup("pod-name"); flag != nil {
+		v.BindPFlag("leaderElection.podName", flag)
 	}
 
 	if err := v.BindEnv("leaderElection.podName", "POD_NAME"); err != nil {

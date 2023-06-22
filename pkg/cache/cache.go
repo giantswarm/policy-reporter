@@ -1,32 +1,11 @@
 package cache
 
-import (
-	"time"
-
-	gocache "github.com/patrickmn/go-cache"
-)
+import "github.com/kyverno/policy-reporter/pkg/crd/api/policyreport/v1alpha2"
 
 type Cache interface {
-	Has(id string) bool
-	Add(id string)
-}
-
-type InMemoryCache struct {
-	cache *gocache.Cache
-}
-
-func (c *InMemoryCache) Has(id string) bool {
-	_, ok := c.cache.Get(id)
-
-	return ok
-}
-
-func (c *InMemoryCache) Add(id string) {
-	c.cache.SetDefault(id, true)
-}
-
-func New(defaultExpiration, cleanupInterval time.Duration) *InMemoryCache {
-	return &InMemoryCache{
-		cache: gocache.New(defaultExpiration, cleanupInterval),
-	}
+	RemoveReport(id string)
+	AddReport(report v1alpha2.ReportInterface)
+	GetResults(id string) []string
+	Shared() bool
+	Clear()
 }

@@ -2,13 +2,14 @@ package violations
 
 import (
 	"context"
-	"log"
 	"sync"
+
+	"go.uber.org/zap"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/kyverno/policy-reporter/pkg/crd/api/policyreport/v1alpha2"
 	api "github.com/kyverno/policy-reporter/pkg/crd/client/clientset/versioned/typed/policyreport/v1alpha2"
 	"github.com/kyverno/policy-reporter/pkg/email"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type Generator struct {
@@ -55,7 +56,7 @@ func (o *Generator) GenerateData(ctx context.Context) ([]Source, error) {
 
 				s.AddClusterPassed(report.Summary.Pass)
 
-				defer log.Printf("[INFO] Processed ClusterPolicyReport '%s'\n", report.Name)
+				zap.L().Info("Processed PolicyRepor", zap.String("name", report.Name))
 
 				length := len(report.Results)
 				if length == 0 || length == report.Summary.Pass+report.Summary.Skip {
@@ -104,7 +105,7 @@ func (o *Generator) GenerateData(ctx context.Context) ([]Source, error) {
 
 			s.AddNamespacedPassed(report.Namespace, report.Summary.Pass)
 
-			defer log.Printf("[INFO] Processed PolicyReport '%s'\n", report.Name)
+			defer zap.L().Info("Processed PolicyRepor", zap.String("name", report.Name))
 
 			length := len(report.Results)
 			if length == 0 || length == report.Summary.Pass+report.Summary.Skip {

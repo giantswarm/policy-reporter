@@ -1,11 +1,26 @@
 package config
 
 import (
-	"database/sql"
+	"context"
 	"time"
+
+	goredis "github.com/go-redis/redis/v8"
+	_ "github.com/mattn/go-sqlite3"
+	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect"
+	mail "github.com/xhit/go-simple-mail/v2"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	k8s "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/workqueue"
 
 	"github.com/kyverno/policy-reporter/pkg/api"
 	"github.com/kyverno/policy-reporter/pkg/cache"
+	"github.com/kyverno/policy-reporter/pkg/crd/client/clientset/versioned"
+	wgpolicyk8sv1alpha2 "github.com/kyverno/policy-reporter/pkg/crd/client/clientset/versioned/typed/policyreport/v1alpha2"
+	"github.com/kyverno/policy-reporter/pkg/database"
 	"github.com/kyverno/policy-reporter/pkg/email"
 	"github.com/kyverno/policy-reporter/pkg/email/summary"
 	"github.com/kyverno/policy-reporter/pkg/email/violations"
@@ -14,56 +29,81 @@ import (
 	"github.com/kyverno/policy-reporter/pkg/leaderelection"
 	"github.com/kyverno/policy-reporter/pkg/listener"
 	"github.com/kyverno/policy-reporter/pkg/listener/metrics"
-	"github.com/kyverno/policy-reporter/pkg/redis"
 	"github.com/kyverno/policy-reporter/pkg/report"
-	"github.com/kyverno/policy-reporter/pkg/sqlite3"
 	"github.com/kyverno/policy-reporter/pkg/target"
 	"github.com/kyverno/policy-reporter/pkg/validate"
-	mail "github.com/xhit/go-simple-mail/v2"
-
-	goredis "github.com/go-redis/redis/v8"
-	"github.com/kyverno/policy-reporter/pkg/crd/client/clientset/versioned"
-	wgpolicyk8sv1alpha2 "github.com/kyverno/policy-reporter/pkg/crd/client/clientset/versioned/typed/policyreport/v1alpha2"
-	_ "github.com/mattn/go-sqlite3"
-	k8s "k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 )
 
 // Resolver manages dependencies
 type Resolver struct {
 	config             *Config
 	k8sConfig          *rest.Config
-	mapper             kubernetes.Mapper
+	mapper             report.Mapper
 	publisher          report.EventPublisher
-	policyStore        sqlite3.PolicyReportStore
+	policyStore        *database.Store
+	database           *bun.DB
 	policyReportClient report.PolicyReportClient
 	leaderElector      *leaderelection.Client
 	targetClients      []target.Client
 	resultCache        cache.Cache
 	targetsCreated     bool
+	logger             *zap.Logger
+	resultListener     *listener.ResultListener
 }
 
 // APIServer resolver method
 func (r *Resolver) APIServer(synced func() bool) api.Server {
+	var logger *zap.Logger
+	if r.config.API.Logging {
+		logger, _ = r.Logger()
+	}
+
 	return api.NewServer(
 		r.TargetClients(),
 		r.config.API.Port,
+		logger,
 		synced,
 	)
 }
 
 // Database resolver method
-func (r *Resolver) Database() (*sql.DB, error) {
-	return sqlite3.NewDatabase(r.config.DBFile)
+func (r *Resolver) Database() *bun.DB {
+	if r.database != nil {
+		return r.database
+	}
+
+	factory := r.DatabaseFactory()
+
+	switch r.config.Database.Type {
+	case database.MySQL:
+		if r.database = factory.NewMySQL(r.config.Database); r.database != nil {
+			zap.L().Info("mysql connection created")
+			return r.database
+		}
+	case database.MariaDB:
+		if r.database = factory.NewMySQL(r.config.Database); r.database != nil {
+			zap.L().Info("mariadb connection created")
+			return r.database
+		}
+	case database.PostgreSQL:
+		if r.database = factory.NewPostgres(r.config.Database); r.database != nil {
+			zap.L().Info("postgres connection created")
+			return r.database
+		}
+	}
+
+	zap.L().Info("sqlite connection created")
+	r.database = factory.NewSQLite(r.config.DBFile)
+	return r.database
 }
 
 // PolicyReportStore resolver method
-func (r *Resolver) PolicyReportStore(db *sql.DB) (sqlite3.PolicyReportStore, error) {
+func (r *Resolver) PolicyReportStore(db *bun.DB) (*database.Store, error) {
 	if r.policyStore != nil {
 		return r.policyStore, nil
 	}
 
-	s, err := sqlite3.NewPolicyReportStore(db)
+	s, err := database.NewStore(db, r.config.Version)
 	r.policyStore = s
 
 	return r.policyStore, err
@@ -106,20 +146,63 @@ func (r *Resolver) EventPublisher() report.EventPublisher {
 	return r.publisher
 }
 
-// RegisterSendResultListener resolver method
-func (r *Resolver) RegisterSendResultListener() {
-	targets := r.TargetClients()
-	if len(targets) > 0 {
-		newResultListener := listener.NewResultListener(r.SkipExistingOnStartup(), r.ResultCache(), time.Now())
-		newResultListener.RegisterListener(listener.NewSendResultListener(targets))
-
-		r.EventPublisher().RegisterListener(listener.NewResults, newResultListener.Listen)
+// EventPublisher resolver method
+func (r *Resolver) Queue() (*kubernetes.Queue, error) {
+	client, err := r.CRDClient()
+	if err != nil {
+		return nil, err
 	}
+
+	return kubernetes.NewQueue(
+		kubernetes.NewDebouncer(1*time.Minute, r.EventPublisher()),
+		workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "report-queue"),
+		client,
+	), nil
+}
+
+// RegisterNewResultsListener resolver method
+func (r *Resolver) RegisterNewResultsListener() {
+	targets := r.TargetClients()
+	if len(targets) == 0 {
+		return
+	}
+
+	newResultListener := listener.NewResultListener(r.SkipExistingOnStartup(), r.ResultCache(), time.Now())
+	r.resultListener = newResultListener
+	r.EventPublisher().RegisterListener(listener.NewResults, newResultListener.Listen)
 }
 
 // RegisterSendResultListener resolver method
-func (r *Resolver) RegisterStoreListener(store report.PolicyReportStore) {
-	r.EventPublisher().RegisterListener(listener.Store, listener.NewStoreListener(store))
+func (r *Resolver) RegisterSendResultListener() {
+	targets := r.TargetClients()
+
+	if len(targets) == 0 {
+		return
+	}
+
+	if r.resultListener == nil {
+		r.RegisterNewResultsListener()
+	}
+
+	r.resultListener.RegisterListener(listener.NewSendResultListener(targets, r.Mapper()))
+}
+
+// RegisterSendResultListener resolver method
+func (r *Resolver) UnregisterSendResultListener() {
+	if r.ResultCache().Shared() {
+		r.EventPublisher().UnregisterListener(listener.NewResults)
+	}
+
+	if r.resultListener == nil {
+		return
+	}
+
+	r.resultListener.UnregisterListener()
+}
+
+// RegisterSendResultListener resolver method
+func (r *Resolver) RegisterStoreListener(ctx context.Context, store report.PolicyReportStore) {
+	r.EventPublisher().RegisterListener(listener.Store, listener.NewStoreListener(ctx, store))
 }
 
 // RegisterMetricsListener resolver method
@@ -142,12 +225,12 @@ func (r *Resolver) RegisterMetricsListener() {
 }
 
 // Mapper resolver method
-func (r *Resolver) Mapper() kubernetes.Mapper {
+func (r *Resolver) Mapper() report.Mapper {
 	if r.mapper != nil {
 		return r.mapper
 	}
 
-	mapper := kubernetes.NewMapper(r.config.PriorityMap)
+	mapper := report.NewMapper(r.config.PriorityMap)
 
 	r.mapper = mapper
 
@@ -166,7 +249,12 @@ func (r *Resolver) SecretClient() secrets.Client {
 
 func (r *Resolver) TargetFactory() *TargetFactory {
 	return &TargetFactory{
-		namespace:    r.config.Namespace,
+		secretClient: r.SecretClient(),
+	}
+}
+
+func (r *Resolver) DatabaseFactory() *DatabaseFactory {
+	return &DatabaseFactory{
 		secretClient: r.SecretClient(),
 	}
 }
@@ -188,7 +276,9 @@ func (r *Resolver) TargetClients() []target.Client {
 	clients = append(clients, factory.TeamsClients(r.config.Teams)...)
 	clients = append(clients, factory.S3Clients(r.config.S3)...)
 	clients = append(clients, factory.KinesisClients(r.config.Kinesis)...)
+	clients = append(clients, factory.SecurityHubs(r.config.SecurityHub)...)
 	clients = append(clients, factory.WebhookClients(r.config.Webhook)...)
+	clients = append(clients, factory.GCSClients(r.config.GCS)...)
 
 	if ui := factory.UIClient(r.config.UI); ui != nil {
 		clients = append(clients, ui)
@@ -202,6 +292,18 @@ func (r *Resolver) TargetClients() []target.Client {
 
 func (r *Resolver) HasTargets() bool {
 	return len(r.TargetClients()) > 0
+}
+
+func (r *Resolver) EnableLeaderElection() bool {
+	if !r.config.LeaderElection.Enabled {
+		return false
+	}
+
+	if !r.HasTargets() && r.Database().Dialect().Name() == dialect.SQLite {
+		return false
+	}
+
+	return true
 }
 
 // SkipExistingOnStartup config method
@@ -222,6 +324,15 @@ func (r *Resolver) CRDClient() (wgpolicyk8sv1alpha2.Wgpolicyk8sV1alpha2Interface
 	}
 
 	return client.Wgpolicyk8sV1alpha2(), nil
+}
+
+func (r *Resolver) CRDMetadataClient() (metadata.Interface, error) {
+	client, err := metadata.NewForConfig(r.k8sConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	return client, nil
 }
 
 func (r *Resolver) SummaryGenerator() (*summary.Generator, error) {
@@ -286,12 +397,17 @@ func (r *Resolver) PolicyReportClient() (report.PolicyReportClient, error) {
 		return r.policyReportClient, nil
 	}
 
-	client, err := versioned.NewForConfig(r.k8sConfig)
+	client, err := r.CRDMetadataClient()
 	if err != nil {
 		return nil, err
 	}
 
-	r.policyReportClient = kubernetes.NewPolicyReportClient(client, r.Mapper(), r.ReportFilter(), r.EventPublisher())
+	queue, err := r.Queue()
+	if err != nil {
+		return nil, err
+	}
+
+	r.policyReportClient = kubernetes.NewPolicyReportClient(client, r.ReportFilter(), queue)
 
 	return r.policyReportClient, nil
 }
@@ -310,7 +426,7 @@ func (r *Resolver) ResultCache() cache.Cache {
 	}
 
 	if r.config.Redis.Enabled {
-		r.resultCache = redis.New(
+		r.resultCache = cache.NewRedisCache(
 			r.config.Redis.Prefix,
 			goredis.NewClient(&goredis.Options{
 				Addr:     r.config.Redis.Address,
@@ -321,10 +437,59 @@ func (r *Resolver) ResultCache() cache.Cache {
 			2*time.Hour,
 		)
 	} else {
-		r.resultCache = cache.New(time.Minute*150, time.Minute*15)
+		r.resultCache = cache.NewInMermoryCache()
 	}
 
 	return r.resultCache
+}
+
+// Logger resolver method
+func (r *Resolver) Logger() (*zap.Logger, error) {
+	if r.logger != nil {
+		return r.logger, nil
+	}
+
+	encoder := zap.NewProductionEncoderConfig()
+	if r.config.Logging.Development {
+		encoder = zap.NewDevelopmentEncoderConfig()
+		encoder.EncodeTime = zapcore.TimeEncoderOfLayout("2006-01-02 15:04:05")
+	}
+
+	ouput := "json"
+	if r.config.Logging.Encoding != "json" {
+		ouput = "console"
+		encoder.EncodeCaller = nil
+	}
+
+	var sampling *zap.SamplingConfig
+	if !r.config.Logging.Development {
+		sampling = &zap.SamplingConfig{
+			Initial:    100,
+			Thereafter: 100,
+		}
+	}
+
+	config := zap.Config{
+		Level:             zap.NewAtomicLevelAt(zapcore.Level(r.config.Logging.LogLevel)),
+		Development:       r.config.Logging.Development,
+		Sampling:          sampling,
+		Encoding:          ouput,
+		EncoderConfig:     encoder,
+		DisableStacktrace: !r.config.Logging.Development,
+		OutputPaths:       []string{"stderr"},
+		ErrorOutputPaths:  []string{"stderr"},
+	}
+
+	logger, err := config.Build()
+	if err != nil {
+		return nil, err
+	}
+
+	r.logger = logger
+
+	zap.ReplaceGlobals(logger)
+
+	return r.logger, nil
 }
 
 // NewResolver constructor function

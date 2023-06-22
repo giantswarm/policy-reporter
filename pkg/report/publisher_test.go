@@ -4,6 +4,9 @@ import (
 	"sync"
 	"testing"
 
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/kyverno/policy-reporter/pkg/crd/api/policyreport/v1alpha2"
 	"github.com/kyverno/policy-reporter/pkg/report"
 )
 
@@ -11,7 +14,7 @@ func Test_PublishLifecycleEvents(t *testing.T) {
 	var event report.LifecycleEvent
 
 	wg := sync.WaitGroup{}
-	wg.Add(1)
+	wg.Add(2)
 
 	publisher := report.NewEventPublisher()
 	publisher.RegisterListener("test", func(le report.LifecycleEvent) {
@@ -19,7 +22,19 @@ func Test_PublishLifecycleEvents(t *testing.T) {
 		wg.Done()
 	})
 
-	publisher.Publish(report.LifecycleEvent{Type: report.Updated, NewPolicyReport: report.PolicyReport{ID: "UID"}, OldPolicyReport: report.PolicyReport{ID: "UID"}})
+	publisher.Publish(report.LifecycleEvent{Type: report.Added, PolicyReport: &v1alpha2.PolicyReport{
+		ObjectMeta: v1.ObjectMeta{
+			Name:      "polr-test",
+			Namespace: "test",
+		},
+	}})
+
+	publisher.Publish(report.LifecycleEvent{Type: report.Updated, PolicyReport: &v1alpha2.PolicyReport{
+		ObjectMeta: v1.ObjectMeta{
+			Name:      "polr-test",
+			Namespace: "test",
+		},
+	}})
 
 	wg.Wait()
 
@@ -40,8 +55,18 @@ func Test_PublishDeleteLifecycleEvents(t *testing.T) {
 		wg.Done()
 	})
 
-	publisher.Publish(report.LifecycleEvent{Type: report.Updated, NewPolicyReport: report.PolicyReport{ID: "UID"}, OldPolicyReport: report.PolicyReport{ID: "UID"}})
-	publisher.Publish(report.LifecycleEvent{Type: report.Deleted, NewPolicyReport: report.PolicyReport{ID: "UID"}})
+	publisher.Publish(report.LifecycleEvent{Type: report.Added, PolicyReport: &v1alpha2.PolicyReport{
+		ObjectMeta: v1.ObjectMeta{
+			Name:      "polr-test",
+			Namespace: "test",
+		},
+	}})
+	publisher.Publish(report.LifecycleEvent{Type: report.Deleted, PolicyReport: &v1alpha2.PolicyReport{
+		ObjectMeta: v1.ObjectMeta{
+			Name:      "polr-test",
+			Namespace: "test",
+		},
+	}})
 
 	wg.Wait()
 

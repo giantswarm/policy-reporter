@@ -94,7 +94,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: ui
-          image: "ghcr.io/kyverno/policy-reporter-ui:1.7.1"
+          image: "ghcr.io/kyverno/policy-reporter-ui:1.8.4"
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -107,6 +107,7 @@ spec:
             runAsUser: 1234
           args:
             - -policy-reporter=http://policy-reporter:8080
+            - -overwrite-host
           ports:
             - name: http
               containerPort: 8080
@@ -147,7 +148,7 @@ spec:
         fsGroup: 1234
       containers:
         - name: policy-reporter
-          image: "ghcr.io/kyverno/policy-reporter:2.11.1"
+          image: "ghcr.io/kyverno/policy-reporter:2.15.2"
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false

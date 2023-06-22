@@ -2,20 +2,21 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"flag"
-	"log"
-
-	"github.com/kyverno/policy-reporter/pkg/config"
-	"github.com/kyverno/policy-reporter/pkg/listener"
 
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/klog"
+
+	"github.com/kyverno/policy-reporter/pkg/config"
+	"github.com/kyverno/policy-reporter/pkg/database"
+	"github.com/kyverno/policy-reporter/pkg/listener"
 )
 
-func newRunCMD() *cobra.Command {
+func newRunCMD(version string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Run PolicyReporter Watcher & HTTP Metrics Server",
@@ -24,10 +25,11 @@ func newRunCMD() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			c.Version = version
 
 			var k8sConfig *rest.Config
-			if c.Kubeconfig != "" {
-				k8sConfig, err = clientcmd.BuildConfigFromFlags("", c.Kubeconfig)
+			if c.K8sClient.Kubeconfig != "" {
+				k8sConfig, err = clientcmd.BuildConfigFromFlags("", c.K8sClient.Kubeconfig)
 			} else {
 				k8sConfig, err = rest.InClusterConfig()
 			}
@@ -35,7 +37,15 @@ func newRunCMD() *cobra.Command {
 				return err
 			}
 
+			k8sConfig.QPS = c.K8sClient.QPS
+			k8sConfig.Burst = c.K8sClient.Burst
+
+			readinessProbe := config.NewReadinessProbe(c)
 			resolver := config.NewResolver(c, k8sConfig)
+			logger, err := resolver.Logger()
+			if err != nil {
+				return err
+			}
 
 			client, err := resolver.PolicyReportClient()
 			if err != nil {
@@ -46,70 +56,110 @@ func newRunCMD() *cobra.Command {
 
 			g := &errgroup.Group{}
 
+			var store *database.Store
+
 			if c.REST.Enabled {
-				db, err := resolver.Database()
-				if err != nil {
-					return err
+				db := resolver.Database()
+				if db == nil {
+					return errors.New("unable to create database connection")
 				}
 				defer db.Close()
 
-				store, err := resolver.PolicyReportStore(db)
+				store, err = resolver.PolicyReportStore(db)
 				if err != nil {
 					return err
 				}
 
-				log.Println("[INFO] REST api enabled")
-				resolver.RegisterStoreListener(store)
+				if !c.LeaderElection.Enabled || store.IsSQLite() {
+					store.PrepareDatabase(cmd.Context())
+					resolver.RegisterStoreListener(cmd.Context(), store)
+				}
+
+				logger.Info("REST api enabled")
 				server.RegisterV1Handler(store)
 			}
 
 			if c.Metrics.Enabled {
-				log.Println("[INFO] metrics enabled")
+				logger.Info("metrics enabled")
 				resolver.RegisterMetricsListener()
 				server.RegisterMetricsHandler()
 			}
 
 			if c.Profiling.Enabled {
-				log.Println("[INFO] pprof profiling enabled")
+				logger.Info("pprof profiling enabled")
 				server.RegisterProfilingHandler()
 			}
 
-			if resolver.HasTargets() && c.LeaderElection.Enabled {
+			if !resolver.ResultCache().Shared() {
+				logger.Debug("register new result listener")
+				resolver.RegisterNewResultsListener()
+			}
+
+			if resolver.EnableLeaderElection() {
 				elector, err := resolver.LeaderElectionClient()
 				if err != nil {
 					return err
 				}
 
-				elector.RegisterOnStart(func(c context.Context) {
-					klog.Info("started leadership")
+				elector.RegisterOnStart(func(ctx context.Context) {
+					logger.Info("started leadership")
+
+					if c.REST.Enabled && !store.IsSQLite() {
+						store.PrepareDatabase(cmd.Context())
+
+						logger.Debug("register database persistence")
+						resolver.RegisterStoreListener(ctx, store)
+
+						if readinessProbe.Running() {
+							logger.Debug("trigger informer restart")
+							client.Stop()
+						}
+					}
 
 					resolver.RegisterSendResultListener()
+
+					readinessProbe.Ready()
 				}).RegisterOnNew(func(currentID, lockID string) {
 					if currentID != lockID {
-						klog.Infof("leadership by %s", currentID)
+						logger.Info("leadership", zap.String("leader", currentID))
+						readinessProbe.Ready()
+						return
 					}
 				}).RegisterOnStop(func() {
-					klog.Info("stopped leadership")
+					logger.Info("stopped leadership")
 
-					resolver.EventPublisher().UnregisterListener(listener.NewResults)
+					if !store.IsSQLite() {
+						resolver.EventPublisher().UnregisterListener(listener.Store)
+					}
+
+					if resolver.HasTargets() {
+						resolver.UnregisterSendResultListener()
+					}
 				})
 
 				g.Go(func() error {
 					return elector.Run(cmd.Context())
 				})
-			} else if resolver.HasTargets() {
+			} else {
 				resolver.RegisterSendResultListener()
 			}
 
 			g.Go(server.Start)
 
-			stop := make(chan struct{})
-			defer close(stop)
+			g.Go(func() error {
+				readinessProbe.Wait()
 
-			err = client.Run(stop)
-			if err != nil {
-				return err
-			}
+				logger.Info("start client", zap.Int("worker", c.WorkerCount))
+
+				for {
+					stop := make(chan struct{})
+					if err := client.Run(c.WorkerCount, stop); err != nil {
+						zap.L().Error("informer client error", zap.Error(err))
+					}
+
+					zap.L().Debug("informer restarts")
+				}
+			})
 
 			return g.Wait()
 		},
@@ -124,6 +174,10 @@ func newRunCMD() *cobra.Command {
 	cmd.PersistentFlags().BoolP("rest-enabled", "r", false, "Enable Policy Reporter's REST API")
 	cmd.PersistentFlags().Bool("profile", false, "Enable application profiling with pprof")
 	cmd.PersistentFlags().String("lease-name", "policy-reporter", "name of the LeaseLock")
+	cmd.PersistentFlags().String("pod-name", "policy-reporter", "name of the pod, used for leaderelection")
+	cmd.PersistentFlags().Int("worker", 5, "amount of queue worker")
+	cmd.PersistentFlags().Float32("qps", 20, "K8s RESTClient QPS")
+	cmd.PersistentFlags().Int("burst", 50, "K8s RESTClient burst")
 
 	flag.Parse()
 

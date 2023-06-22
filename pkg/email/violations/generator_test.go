@@ -4,19 +4,21 @@ import (
 	"context"
 	"testing"
 
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/kyverno/policy-reporter/pkg/email"
 	"github.com/kyverno/policy-reporter/pkg/email/violations"
+	"github.com/kyverno/policy-reporter/pkg/fixtures"
 	"github.com/kyverno/policy-reporter/pkg/validate"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func Test_GenerateDataWithSingleSource(t *testing.T) {
 	ctx := context.Background()
 
-	client, pClient, cClient := NewFakeCilent()
+	client, pClient, cClient := NewFakeClient()
 
-	_, _ = pClient.Create(ctx, PolicyReportCRD, v1.CreateOptions{})
-	_, _ = cClient.Create(ctx, ClusterPolicyReportCRD, v1.CreateOptions{})
+	_, _ = pClient.Create(ctx, fixtures.DefaultPolicyReport, v1.CreateOptions{})
+	_, _ = cClient.Create(ctx, fixtures.PassClusterPolicyReport, v1.CreateOptions{})
 
 	generator := violations.NewGenerator(client, filter, true)
 
@@ -58,7 +60,7 @@ func Test_GenerateDataWithSingleSource(t *testing.T) {
 	}
 
 	result = source.NamespaceResults["test"]["fail"][2]
-	if result.Rule != "message 3" {
+	if result.Rule != "app-label-required" {
 		t.Fatalf("unexpected rule: %s", result.Rule)
 	}
 }
@@ -66,17 +68,17 @@ func Test_GenerateDataWithSingleSource(t *testing.T) {
 func Test_GenerateDataWithMultipleSource(t *testing.T) {
 	ctx := context.Background()
 
-	client, pClient, cClient := NewFakeCilent()
+	client, pClient, cClient := NewFakeClient()
 
-	_, _ = pClient.Create(ctx, PolicyReportCRD, v1.CreateOptions{})
-	_, _ = pClient.Create(ctx, EmptyPolicyReportCRD, v1.CreateOptions{})
-	_, _ = pClient.Create(ctx, PassPolicyReportCRD, v1.CreateOptions{})
-	_, _ = client.PolicyReports("kyverno").Create(ctx, KyvernoPolicyReportCRD, v1.CreateOptions{})
+	_, _ = pClient.Create(ctx, fixtures.DefaultPolicyReport, v1.CreateOptions{})
+	_, _ = pClient.Create(ctx, fixtures.EmptyPolicyReport, v1.CreateOptions{})
+	_, _ = pClient.Create(ctx, fixtures.PassPolicyReport, v1.CreateOptions{})
+	_, _ = client.PolicyReports("kyverno").Create(ctx, fixtures.KyvernoPolicyReport, v1.CreateOptions{})
 
-	_, _ = cClient.Create(ctx, ClusterPolicyReportCRD, v1.CreateOptions{})
-	_, _ = cClient.Create(ctx, EmptyClusterPolicyReportCRD, v1.CreateOptions{})
-	_, _ = cClient.Create(ctx, PassClusterPolicyReportCRD, v1.CreateOptions{})
-	_, _ = cClient.Create(ctx, KyvernoClusterPolicyReportCRD, v1.CreateOptions{})
+	_, _ = cClient.Create(ctx, fixtures.ClusterPolicyReport, v1.CreateOptions{})
+	_, _ = cClient.Create(ctx, fixtures.EmptyClusterPolicyReport, v1.CreateOptions{})
+	_, _ = cClient.Create(ctx, fixtures.PassClusterPolicyReport, v1.CreateOptions{})
+	_, _ = cClient.Create(ctx, fixtures.KyvernoClusterPolicyReport, v1.CreateOptions{})
 
 	generator := violations.NewGenerator(client, filter, true)
 
@@ -93,15 +95,15 @@ func Test_GenerateDataWithMultipleSource(t *testing.T) {
 func Test_GenerateDataWithSourceFilter(t *testing.T) {
 	ctx := context.Background()
 
-	client, pClient, cClient := NewFakeCilent()
+	client, pClient, cClient := NewFakeClient()
 
-	_, _ = pClient.Create(ctx, PolicyReportCRD, v1.CreateOptions{})
-	_, _ = pClient.Create(ctx, EmptyPolicyReportCRD, v1.CreateOptions{})
-	_, _ = client.PolicyReports("kyverno").Create(ctx, KyvernoPolicyReportCRD, v1.CreateOptions{})
+	_, _ = pClient.Create(ctx, fixtures.DefaultPolicyReport, v1.CreateOptions{})
+	_, _ = pClient.Create(ctx, fixtures.EmptyPolicyReport, v1.CreateOptions{})
+	_, _ = client.PolicyReports("kyverno").Create(ctx, fixtures.KyvernoPolicyReport, v1.CreateOptions{})
 
-	_, _ = cClient.Create(ctx, ClusterPolicyReportCRD, v1.CreateOptions{})
-	_, _ = cClient.Create(ctx, EmptyClusterPolicyReportCRD, v1.CreateOptions{})
-	_, _ = cClient.Create(ctx, KyvernoClusterPolicyReportCRD, v1.CreateOptions{})
+	_, _ = cClient.Create(ctx, fixtures.ClusterPolicyReport, v1.CreateOptions{})
+	_, _ = cClient.Create(ctx, fixtures.EmptyClusterPolicyReport, v1.CreateOptions{})
+	_, _ = cClient.Create(ctx, fixtures.KyvernoClusterPolicyReport, v1.CreateOptions{})
 
 	generator := violations.NewGenerator(client, email.NewFilter(validate.RuleSets{}, validate.RuleSets{Include: []string{"test"}}), true)
 
@@ -118,15 +120,15 @@ func Test_GenerateDataWithSourceFilter(t *testing.T) {
 func Test_FilterSourcesBySource(t *testing.T) {
 	ctx := context.Background()
 
-	client, pClient, cClient := NewFakeCilent()
+	client, pClient, cClient := NewFakeClient()
 
-	_, _ = pClient.Create(ctx, PolicyReportCRD, v1.CreateOptions{})
-	_, _ = pClient.Create(ctx, EmptyPolicyReportCRD, v1.CreateOptions{})
-	_, _ = client.PolicyReports("kyverno").Create(ctx, KyvernoPolicyReportCRD, v1.CreateOptions{})
+	_, _ = pClient.Create(ctx, fixtures.DefaultPolicyReport, v1.CreateOptions{})
+	_, _ = pClient.Create(ctx, fixtures.EmptyPolicyReport, v1.CreateOptions{})
+	_, _ = client.PolicyReports("kyverno").Create(ctx, fixtures.KyvernoPolicyReport, v1.CreateOptions{})
 
-	_, _ = cClient.Create(ctx, ClusterPolicyReportCRD, v1.CreateOptions{})
-	_, _ = cClient.Create(ctx, EmptyClusterPolicyReportCRD, v1.CreateOptions{})
-	_, _ = cClient.Create(ctx, KyvernoClusterPolicyReportCRD, v1.CreateOptions{})
+	_, _ = cClient.Create(ctx, fixtures.ClusterPolicyReport, v1.CreateOptions{})
+	_, _ = cClient.Create(ctx, fixtures.EmptyClusterPolicyReport, v1.CreateOptions{})
+	_, _ = cClient.Create(ctx, fixtures.KyvernoClusterPolicyReport, v1.CreateOptions{})
 
 	generator := violations.NewGenerator(client, filter, true)
 
@@ -144,15 +146,15 @@ func Test_FilterSourcesBySource(t *testing.T) {
 func Test_FilterSourcesByNamespace(t *testing.T) {
 	ctx := context.Background()
 
-	client, pClient, cClient := NewFakeCilent()
+	client, pClient, cClient := NewFakeClient()
 
-	_, _ = pClient.Create(ctx, PolicyReportCRD, v1.CreateOptions{})
-	_, _ = pClient.Create(ctx, EmptyPolicyReportCRD, v1.CreateOptions{})
-	_, _ = client.PolicyReports("kyverno").Create(ctx, KyvernoPolicyReportCRD, v1.CreateOptions{})
+	_, _ = pClient.Create(ctx, fixtures.DefaultPolicyReport, v1.CreateOptions{})
+	_, _ = pClient.Create(ctx, fixtures.EmptyPolicyReport, v1.CreateOptions{})
+	_, _ = client.PolicyReports("kyverno").Create(ctx, fixtures.KyvernoPolicyReport, v1.CreateOptions{})
 
-	_, _ = cClient.Create(ctx, ClusterPolicyReportCRD, v1.CreateOptions{})
-	_, _ = cClient.Create(ctx, EmptyClusterPolicyReportCRD, v1.CreateOptions{})
-	_, _ = cClient.Create(ctx, KyvernoClusterPolicyReportCRD, v1.CreateOptions{})
+	_, _ = cClient.Create(ctx, fixtures.ClusterPolicyReport, v1.CreateOptions{})
+	_, _ = cClient.Create(ctx, fixtures.EmptyClusterPolicyReport, v1.CreateOptions{})
+	_, _ = cClient.Create(ctx, fixtures.KyvernoClusterPolicyReport, v1.CreateOptions{})
 
 	generator := violations.NewGenerator(client, filter, true)
 
@@ -175,15 +177,15 @@ func Test_FilterSourcesByNamespace(t *testing.T) {
 func Test_RemoveEmptySource(t *testing.T) {
 	ctx := context.Background()
 
-	client, pClient, cClient := NewFakeCilent()
+	client, pClient, cClient := NewFakeClient()
 
-	_, _ = pClient.Create(ctx, PolicyReportCRD, v1.CreateOptions{})
-	_, _ = pClient.Create(ctx, EmptyPolicyReportCRD, v1.CreateOptions{})
-	_, _ = client.PolicyReports("kyverno").Create(ctx, KyvernoPolicyReportCRD, v1.CreateOptions{})
+	_, _ = pClient.Create(ctx, fixtures.DefaultPolicyReport, v1.CreateOptions{})
+	_, _ = pClient.Create(ctx, fixtures.EmptyPolicyReport, v1.CreateOptions{})
+	_, _ = client.PolicyReports("kyverno").Create(ctx, fixtures.KyvernoPolicyReport, v1.CreateOptions{})
 
-	_, _ = cClient.Create(ctx, ClusterPolicyReportCRD, v1.CreateOptions{})
-	_, _ = cClient.Create(ctx, EmptyClusterPolicyReportCRD, v1.CreateOptions{})
-	_, _ = cClient.Create(ctx, KyvernoClusterPolicyReportCRD, v1.CreateOptions{})
+	_, _ = cClient.Create(ctx, fixtures.ClusterPolicyReport, v1.CreateOptions{})
+	_, _ = cClient.Create(ctx, fixtures.EmptyClusterPolicyReport, v1.CreateOptions{})
+	_, _ = cClient.Create(ctx, fixtures.KyvernoClusterPolicyReport, v1.CreateOptions{})
 
 	generator := violations.NewGenerator(client, filter, true)
 

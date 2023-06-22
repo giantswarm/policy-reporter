@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/kyverno/policy-reporter/pkg/cache"
+	"github.com/kyverno/policy-reporter/pkg/crd/api/policyreport/v1alpha2"
+	"github.com/kyverno/policy-reporter/pkg/helper"
 	"github.com/kyverno/policy-reporter/pkg/report"
 )
 
@@ -21,51 +23,74 @@ func (l *ResultListener) RegisterListener(listener report.PolicyReportResultList
 	l.listener = append(l.listener, listener)
 }
 
+func (l *ResultListener) UnregisterListener() {
+	l.listener = make([]report.PolicyReportResultListener, 0)
+}
+
 func (l *ResultListener) Listen(event report.LifecycleEvent) {
-	if len(event.OldPolicyReport.Results) > 0 {
-		for _, result := range event.OldPolicyReport.Results {
-			l.cache.Add(result.ID)
-		}
+	if event.Type != report.Added && event.Type != report.Updated {
+		l.cache.RemoveReport(event.PolicyReport.GetID())
+		return
 	}
 
-	if event.Type != report.Added && event.Type != report.Updated {
+	resultCount := len(event.PolicyReport.GetResults())
+	if resultCount == 0 {
+		return
+	}
+
+	listenerCount := len(l.listener)
+	if listenerCount == 0 {
+		l.cache.AddReport(event.PolicyReport)
 		return
 	}
 
 	var preExisted bool
 
 	if event.Type == report.Added {
-		preExisted = event.NewPolicyReport.CreationTimestamp.Before(l.startUp)
+		preExisted = event.PolicyReport.GetCreationTimestamp().Local().Before(l.startUp)
 
 		if l.skipExisting && preExisted {
+			l.cache.AddReport(event.PolicyReport)
 			return
 		}
 	}
 
-	if len(event.NewPolicyReport.Results) == 0 {
-		return
+	existing := l.cache.GetResults(event.PolicyReport.GetID())
+
+	grp := sync.WaitGroup{}
+	grp.Add(resultCount)
+	for _, res := range event.PolicyReport.GetResults() {
+		go func(r v1alpha2.PolicyReportResult) {
+			defer grp.Done()
+
+			if helper.Contains(r.GetID(), existing) {
+				return
+			}
+
+			if r.Timestamp.Seconds > 0 {
+				created := time.Unix(r.Timestamp.Seconds, int64(r.Timestamp.Nanos))
+				if l.skipExisting && created.Local().Before(l.startUp) {
+					return
+				}
+			}
+
+			wg := sync.WaitGroup{}
+			wg.Add(listenerCount)
+
+			for _, cb := range l.listener {
+				go func(callback report.PolicyReportResultListener, result v1alpha2.PolicyReportResult) {
+					callback(event.PolicyReport, result, preExisted)
+					wg.Done()
+				}(cb, r)
+			}
+
+			wg.Wait()
+		}(res)
 	}
 
-	diff := event.NewPolicyReport.GetNewResults(event.OldPolicyReport)
+	grp.Wait()
 
-	wg := sync.WaitGroup{}
-
-	for _, r := range diff {
-		if found := l.cache.Has(r.GetIdentifier()); found {
-			continue
-		}
-
-		wg.Add(len(l.listener))
-
-		for _, cb := range l.listener {
-			go func(callback report.PolicyReportResultListener, result report.Result) {
-				callback(event.NewPolicyReport, result, preExisted)
-				wg.Done()
-			}(cb, r)
-		}
-	}
-
-	wg.Wait()
+	l.cache.AddReport(event.PolicyReport)
 }
 
 func NewResultListener(skipExisting bool, rcache cache.Cache, startUp time.Time) *ResultListener {

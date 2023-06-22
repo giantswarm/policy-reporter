@@ -10,6 +10,8 @@ import (
 var (
 	ResultGaugeName        = "policy_report_result"
 	ClusterResultGaugeName = "cluster_policy_report_result"
+
+	replacer = strings.NewReplacer(".", "_", "/", "_", ":", "_", "-", "_", ";", "_")
 )
 
 const Metrics = "metric_listener"
@@ -24,7 +26,7 @@ func NewMetricsListener(
 	resultListeners := ResultListeners(filter, reportFilter, mode, fields)
 
 	return func(event report.LifecycleEvent) {
-		if event.NewPolicyReport.Namespace == "" {
+		if event.PolicyReport.GetNamespace() == "" {
 			resultListeners[1](event)
 		} else {
 			resultListeners[0](event)
@@ -64,8 +66,10 @@ func ResultListeners(
 		for _, label := range labels {
 			labelName := label
 			if strings.HasPrefix(label, metrics.ReportLabelPrefix) {
-				replacer := strings.NewReplacer(".", "_", "/", "_", ":", "_", "-", "_", ";", "_")
 				labelName = replacer.Replace(strings.TrimPrefix(label, metrics.ReportLabelPrefix))
+			}
+			if strings.HasPrefix(label, metrics.ReportPropertyPrefix) {
+				labelName = replacer.Replace(strings.TrimPrefix(label, metrics.ReportPropertyPrefix))
 			}
 
 			labelNames = append(labelNames, labelName)

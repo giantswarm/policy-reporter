@@ -3,6 +3,8 @@ package api
 import (
 	"fmt"
 	"net/http"
+
+	"go.uber.org/zap"
 )
 
 // HealthzHandler for the Halthz REST API
@@ -13,6 +15,8 @@ func HealthzHandler(synced func() bool) http.HandlerFunc {
 			w.WriteHeader(http.StatusServiceUnavailable)
 
 			fmt.Fprint(w, `{ "error": "Informers not in sync" }`)
+
+			zap.L().Warn("informers not synced yet, waiting for k8s client to complete startup")
 
 			return
 		}
@@ -32,6 +36,8 @@ func ReadyHandler(synced func() bool) http.HandlerFunc {
 			w.WriteHeader(http.StatusServiceUnavailable)
 
 			fmt.Fprint(w, `{ "error": "Informers not in sync" }`)
+
+			zap.L().Warn("informers not synced yet, waiting for k8s client to be up")
 
 			return
 		}

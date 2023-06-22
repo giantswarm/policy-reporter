@@ -21,9 +21,10 @@ package externalversions
 import (
 	"fmt"
 
-	policyreportv1alpha2 "github.com/kyverno/policy-reporter/pkg/crd/api/policyreport/v1alpha2"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	cache "k8s.io/client-go/tools/cache"
+
+	policyreportv1alpha2 "github.com/kyverno/policy-reporter/pkg/crd/api/policyreport/v1alpha2"
 )
 
 // GenericInformer is type of SharedIndexInformer which will locate and delegate to other
@@ -52,7 +53,7 @@ func (f *genericInformer) Lister() cache.GenericLister {
 // TODO extend this to unknown resources with a client pool
 func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource) (GenericInformer, error) {
 	switch resource {
-		// Group=wgpolicyk8s.io, Version=v1alpha2
+	// Group=wgpolicyk8s.io, Version=v1alpha2
 	case policyreportv1alpha2.SchemeGroupVersion.WithResource("clusterpolicyreports"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Wgpolicyk8s().V1alpha2().ClusterPolicyReports().Informer()}, nil
 	case policyreportv1alpha2.SchemeGroupVersion.WithResource("policyreports"):

@@ -31,6 +31,9 @@ spec:
           {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -38,7 +41,7 @@ spec:
       serviceAccountName: {{ include "ui.serviceAccountName" . }}
       automountServiceAccountToken: false
       containers:
-        - name: {{ .Chart.Name }}
+        - name: {{ default .Chart.Name .Values.nameOverride }}
           image: "{{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- if .Values.securityContext }}
@@ -49,6 +52,9 @@ spec:
             - -policy-reporter=http://{{ include "ui.policyReportServiceName" . }}:{{ .Values.policyReporter.port }}
             {{- if or .Values.plugins.kyverno .Values.global.plugins.kyverno }}
             - -kyverno-plugin=http://{{ include "ui.kyvernoPluginServiceName" . }}:{{ .Values.kyvernoPlugin.port }}
+            {{- end }}
+            {{- if .Values.api.overwriteHost }}
+            - -overwrite-host
             {{- end }}
           ports:
             - name: http
@@ -67,18 +73,28 @@ spec:
             mountPath: /app/config.yaml
             subPath: config.yaml
             readOnly: true
+          {{- if .Values.volumes }}
+            {{- toYaml .Values.volumeMounts | nindent 10 }}
+          {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
       - name: config-file
         configMap:
           name: {{ include "ui.fullname" . }}-config
+      {{- if .Values.volumes }}
+        {{- toYaml .Values.volumes | nindent 6 }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     {{- with .Values.affinity }}
       affinity:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
         {{- toYaml . | nindent 8 }}
     {{- end }}
     {{- with .Values.tolerations }}

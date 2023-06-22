@@ -158,7 +158,7 @@ spec:
       automountServiceAccountToken: true
       containers:
         - name: "kyverno-plugin"
-          image: "ghcr.io/kyverno/policy-reporter-ui:1.5.0"
+          image: "ghcr.io/kyverno/policy-reporter-kyverno-plugin:1.5.1"
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -206,7 +206,7 @@ spec:
     spec:
       containers:
         - name: ui
-          image: "ghcr.io/kyverno/policy-reporter-ui:1.7.1"
+          image: "ghcr.io/kyverno/policy-reporter-ui:1.8.4"
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -220,6 +220,7 @@ spec:
           args:
             - -policy-reporter=http://policy-reporter:8080
             - -kyverno-plugin=http://policy-reporter-kyverno-plugin:8080
+            - -overwrite-host
           ports:
             - name: http
               containerPort: 8080
@@ -259,7 +260,7 @@ spec:
         fsGroup: 1234
       containers:
         - name: policy-reporter
-          image: "ghcr.io/kyverno/policy-reporter:2.11.1"
+          image: "ghcr.io/kyverno/policy-reporter:2.15.2"
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false

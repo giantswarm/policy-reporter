@@ -1,120 +1,130 @@
 package v1_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	v1 "github.com/kyverno/policy-reporter/pkg/api/v1"
-	"github.com/kyverno/policy-reporter/pkg/report"
-	"github.com/kyverno/policy-reporter/pkg/sqlite3"
+	"github.com/kyverno/policy-reporter/pkg/crd/api/policyreport/v1alpha2"
+	"github.com/kyverno/policy-reporter/pkg/database"
 	"github.com/kyverno/policy-reporter/pkg/target"
 	"github.com/kyverno/policy-reporter/pkg/target/loki"
 )
 
-var result1 = report.Result{
+var seconds = time.Date(2022, 9, 6, 0, 0, 0, 0, time.UTC).Unix()
+
+var result1 = v1alpha2.PolicyReportResult{
 	ID:        "123",
 	Message:   "validation error: requests and limits required. Rule autogen-check-for-requests-and-limits failed at path /spec/template/spec/containers/0/resources/requests/",
 	Policy:    "require-requests-and-limits-required",
 	Rule:      "autogen-check-for-requests-and-limits",
-	Priority:  report.ErrorPriority,
-	Status:    report.Fail,
+	Priority:  v1alpha2.ErrorPriority,
+	Result:    v1alpha2.StatusFail,
 	Category:  "Best Practices",
-	Severity:  report.High,
+	Severity:  v1alpha2.SeverityHigh,
 	Scored:    true,
 	Source:    "Kyverno",
-	Timestamp: time.Date(2022, 9, 6, 0, 0, 0, 0, time.UTC),
-	Resource: report.Resource{
+	Timestamp: metav1.Timestamp{Seconds: seconds},
+	Resources: []corev1.ObjectReference{{
 		APIVersion: "v1",
 		Kind:       "Deployment",
 		Name:       "nginx",
 		Namespace:  "test",
 		UID:        "536ab69f-1b3c-4bd9-9ba4-274a56188409",
-	},
+	}},
 }
 
-var result2 = report.Result{
+var result2 = v1alpha2.PolicyReportResult{
 	ID:        "124",
 	Message:   "validation error: requests and limits required. Rule autogen-check-for-requests-and-limits failed at path /spec/template/spec/containers/0/resources/requests/",
 	Policy:    "require-requests-and-limits-required",
 	Rule:      "autogen-check-for-requests-and-limits",
-	Priority:  report.WarningPriority,
-	Status:    report.Pass,
+	Priority:  v1alpha2.WarningPriority,
+	Result:    v1alpha2.StatusPass,
 	Category:  "Best Practices",
 	Scored:    true,
 	Source:    "Kyverno",
-	Timestamp: time.Date(2022, 9, 6, 0, 0, 0, 0, time.UTC),
-	Resource: report.Resource{
+	Timestamp: metav1.Timestamp{Seconds: seconds},
+	Resources: []corev1.ObjectReference{{
 		APIVersion: "v1",
 		Kind:       "Pod",
 		Name:       "nginx",
 		Namespace:  "test",
 		UID:        "536ab69f-1b3c-4bd9-9ba4-274a56188419",
-	},
+	}},
 }
 
-var cresult1 = report.Result{
+var cresult1 = v1alpha2.PolicyReportResult{
 	ID:        "125",
 	Message:   "validation error: The label `test` is required. Rule check-for-labels-on-namespace",
 	Policy:    "require-ns-labels",
 	Rule:      "check-for-labels-on-namespace",
-	Priority:  report.ErrorPriority,
-	Status:    report.Pass,
+	Priority:  v1alpha2.ErrorPriority,
+	Result:    v1alpha2.StatusPass,
 	Category:  "Convention",
-	Severity:  report.Medium,
+	Severity:  v1alpha2.SeverityMedium,
 	Scored:    true,
 	Source:    "Kyverno",
-	Timestamp: time.Date(2022, 9, 6, 0, 0, 0, 0, time.UTC),
-	Resource: report.Resource{
+	Timestamp: metav1.Timestamp{Seconds: seconds},
+	Resources: []corev1.ObjectReference{{
 		APIVersion: "v1",
 		Kind:       "Namespace",
 		Name:       "test",
 		UID:        "536ab69f-1b3c-4bd9-9ba4-274a56188411",
-	},
+	}},
 }
 
-var cresult2 = report.Result{
+var cresult2 = v1alpha2.PolicyReportResult{
 	ID:       "126",
 	Message:  "validation error: The label `test` is required. Rule check-for-labels-on-namespace",
 	Policy:   "require-ns-labels",
 	Rule:     "check-for-labels-on-namespace",
-	Priority: report.WarningPriority,
-	Status:   report.Fail,
+	Priority: v1alpha2.WarningPriority,
+	Result:   v1alpha2.StatusFail,
 	Category: "Convention",
-	Severity: report.High,
+	Severity: v1alpha2.SeverityHigh,
 	Scored:   true,
 	Source:   "Kyverno",
-	Resource: report.Resource{
+	Resources: []corev1.ObjectReference{{
 		APIVersion: "v1",
 		Kind:       "Namespace",
 		Name:       "dev",
 		UID:        "536ab69f-1b3c-4bd9-9ba4-274a56188412",
+	}},
+}
+
+var preport = &v1alpha2.PolicyReport{
+	ObjectMeta: metav1.ObjectMeta{
+		Labels:            map[string]string{"app": "policy-reporter", "scope": "namespace"},
+		Name:              "polr-test",
+		Namespace:         "test",
+		CreationTimestamp: metav1.Now(),
 	},
+	Results: []v1alpha2.PolicyReportResult{result1, result2},
+	Summary: v1alpha2.PolicyReportSummary{Fail: 1},
 }
 
-var preport = report.PolicyReport{
-	ID:                report.GeneratePolicyReportID("polr-test", "test"),
-	Labels:            map[string]string{"app": "policy-reporter", "scope": "namespace"},
-	Name:              "polr-test",
-	Namespace:         "test",
-	Results:           []report.Result{result1, result2},
-	Summary:           report.Summary{Fail: 1},
-	CreationTimestamp: time.Now(),
+var creport = &v1alpha2.ClusterPolicyReport{
+	ObjectMeta: metav1.ObjectMeta{
+		Labels:            map[string]string{"app": "policy-reporter", "scope": "cluster"},
+		Name:              "cpolr",
+		CreationTimestamp: metav1.Now(),
+	},
+	Results: []v1alpha2.PolicyReportResult{cresult1, cresult2},
+	Summary: v1alpha2.PolicyReportSummary{},
 }
 
-var creport = report.PolicyReport{
-	ID:                report.GeneratePolicyReportID("cpolr", ""),
-	Labels:            map[string]string{"app": "policy-reporter", "scope": "cluster"},
-	Name:              "cpolr",
-	Results:           []report.Result{cresult1, cresult2},
-	Summary:           report.Summary{},
-	CreationTimestamp: time.Now(),
-}
+var ctx = context.Background()
 
 func Test_V1_API(t *testing.T) {
-	db, err := sqlite3.NewDatabase("test.db")
+	db, err := database.NewSQLiteDB("test.db")
 	if err != nil {
 		t.Error(err)
 	}
@@ -122,14 +132,17 @@ func Test_V1_API(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := sqlite3.NewPolicyReportStore(db)
+	store, err := database.NewStore(db, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.CleanUp()
+	store.PrepareDatabase(ctx)
+	defer store.CleanUp(ctx)
 
-	store.Add(preport)
-	store.Add(creport)
+	store.Add(ctx, preport)
+	store.Add(ctx, creport)
+
+	handl := v1.NewHandler(store)
 
 	t.Run("ClusterPolicyListHandler", func(t *testing.T) {
 		req, err := http.NewRequest("GET", "/v1/cluster-policies", nil)
@@ -138,7 +151,7 @@ func Test_V1_API(t *testing.T) {
 		}
 
 		rr := httptest.NewRecorder()
-		handler := v1.ClusterResourcesPolicyListHandler(store)
+		handler := handl.ClusterResourcesPolicyListHandler()
 		handler.ServeHTTP(rr, req)
 
 		if status := rr.Code; status != http.StatusOK {
@@ -158,7 +171,7 @@ func Test_V1_API(t *testing.T) {
 		}
 
 		rr := httptest.NewRecorder()
-		handler := v1.ClusterResourcesRuleListHandler(store)
+		handler := handl.ClusterResourcesRuleListHandler()
 		handler.ServeHTTP(rr, req)
 
 		if status := rr.Code; status != http.StatusOK {
@@ -178,7 +191,7 @@ func Test_V1_API(t *testing.T) {
 		}
 
 		rr := httptest.NewRecorder()
-		handler := v1.NamespacedResourcesPolicyListHandler(store)
+		handler := handl.NamespacedResourcesPolicyListHandler()
 		handler.ServeHTTP(rr, req)
 
 		if status := rr.Code; status != http.StatusOK {
@@ -198,7 +211,7 @@ func Test_V1_API(t *testing.T) {
 		}
 
 		rr := httptest.NewRecorder()
-		handler := v1.NamespacedResourcesRuleListHandler(store)
+		handler := handl.NamespacedResourcesRuleListHandler()
 		handler.ServeHTTP(rr, req)
 
 		if status := rr.Code; status != http.StatusOK {
@@ -211,21 +224,41 @@ func Test_V1_API(t *testing.T) {
 		}
 	})
 
-	t.Run("CategoryListHandler", func(t *testing.T) {
+	t.Run("NamespacedCategoryListHandler", func(t *testing.T) {
 		req, err := http.NewRequest("GET", "/v1/categories", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		rr := httptest.NewRecorder()
-		handler := v1.CategoryListHandler(store)
+		handler := handl.NamespacedCategoryListHandler()
 		handler.ServeHTTP(rr, req)
 
 		if status := rr.Code; status != http.StatusOK {
 			t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
 		}
 
-		expected := `["Best Practices","Convention"]`
+		expected := `["Best Practices"]`
+		if !strings.Contains(rr.Body.String(), expected) {
+			t.Errorf("handler returned unexpected body: got %v want %v", rr.Body.String(), expected)
+		}
+	})
+
+	t.Run("ClusterCategoryListHandler", func(t *testing.T) {
+		req, err := http.NewRequest("GET", "/v1/categories", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		rr := httptest.NewRecorder()
+		handler := handl.ClusterCategoryListHandler()
+		handler.ServeHTTP(rr, req)
+
+		if status := rr.Code; status != http.StatusOK {
+			t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
+		}
+
+		expected := `["Convention"]`
 		if !strings.Contains(rr.Body.String(), expected) {
 			t.Errorf("handler returned unexpected body: got %v want %v", rr.Body.String(), expected)
 		}
@@ -238,7 +271,7 @@ func Test_V1_API(t *testing.T) {
 		}
 
 		rr := httptest.NewRecorder()
-		handler := v1.ClusterResourcesKindListHandler(store)
+		handler := handl.ClusterResourcesKindListHandler()
 		handler.ServeHTTP(rr, req)
 
 		if status := rr.Code; status != http.StatusOK {
@@ -258,7 +291,7 @@ func Test_V1_API(t *testing.T) {
 		}
 
 		rr := httptest.NewRecorder()
-		handler := v1.NamespacedResourcesKindListHandler(store)
+		handler := handl.NamespacedResourcesKindListHandler()
 		handler.ServeHTTP(rr, req)
 
 		if status := rr.Code; status != http.StatusOK {
@@ -278,7 +311,7 @@ func Test_V1_API(t *testing.T) {
 		}
 
 		rr := httptest.NewRecorder()
-		handler := v1.ClusterResourcesListHandler(store)
+		handler := handl.ClusterResourcesListHandler()
 		handler.ServeHTTP(rr, req)
 
 		if status := rr.Code; status != http.StatusOK {
@@ -298,7 +331,7 @@ func Test_V1_API(t *testing.T) {
 		}
 
 		rr := httptest.NewRecorder()
-		handler := v1.NamespacedResourcesListHandler(store)
+		handler := handl.NamespacedResourcesListHandler()
 		handler.ServeHTTP(rr, req)
 
 		if status := rr.Code; status != http.StatusOK {
@@ -318,7 +351,7 @@ func Test_V1_API(t *testing.T) {
 		}
 
 		rr := httptest.NewRecorder()
-		handler := v1.ClusterResourcesSourceListHandler(store)
+		handler := handl.ClusterResourcesSourceListHandler()
 		handler.ServeHTTP(rr, req)
 
 		if status := rr.Code; status != http.StatusOK {
@@ -338,7 +371,7 @@ func Test_V1_API(t *testing.T) {
 		}
 
 		rr := httptest.NewRecorder()
-		handler := v1.NamespacedSourceListHandler(store)
+		handler := handl.NamespacedSourceListHandler()
 		handler.ServeHTTP(rr, req)
 
 		if status := rr.Code; status != http.StatusOK {
@@ -358,7 +391,7 @@ func Test_V1_API(t *testing.T) {
 		}
 
 		rr := httptest.NewRecorder()
-		handler := v1.ClusterResourcesStatusCountHandler(store)
+		handler := handl.ClusterResourcesStatusCountHandler()
 		handler.ServeHTTP(rr, req)
 
 		if status := rr.Code; status != http.StatusOK {
@@ -378,7 +411,7 @@ func Test_V1_API(t *testing.T) {
 		}
 
 		rr := httptest.NewRecorder()
-		handler := v1.NamespacedResourcesStatusCountsHandler(store)
+		handler := handl.NamespacedResourcesStatusCountsHandler()
 		handler.ServeHTTP(rr, req)
 
 		if status := rr.Code; status != http.StatusOK {
@@ -398,7 +431,7 @@ func Test_V1_API(t *testing.T) {
 		}
 
 		rr := httptest.NewRecorder()
-		handler := v1.RuleStatusCountHandler(store)
+		handler := handl.RuleStatusCountHandler()
 		handler.ServeHTTP(rr, req)
 
 		if status := rr.Code; status != http.StatusOK {
@@ -428,7 +461,7 @@ func Test_V1_API(t *testing.T) {
 		}
 
 		rr := httptest.NewRecorder()
-		handler := v1.NamespacedResourcesResultHandler(store)
+		handler := handl.NamespacedResourcesResultHandler()
 		handler.ServeHTTP(rr, req)
 
 		if status := rr.Code; status != http.StatusOK {
@@ -448,7 +481,7 @@ func Test_V1_API(t *testing.T) {
 		}
 
 		rr := httptest.NewRecorder()
-		handler := v1.ClusterResourcesResultHandler(store)
+		handler := handl.ClusterResourcesResultHandler()
 		handler.ServeHTTP(rr, req)
 
 		if status := rr.Code; status != http.StatusOK {
@@ -468,7 +501,7 @@ func Test_V1_API(t *testing.T) {
 		}
 
 		rr := httptest.NewRecorder()
-		handler := v1.NamespaceListHandler(store)
+		handler := handl.NamespaceListHandler()
 		handler.ServeHTTP(rr, req)
 
 		if status := rr.Code; status != http.StatusOK {
@@ -482,13 +515,13 @@ func Test_V1_API(t *testing.T) {
 	})
 
 	t.Run("ClusterReportLabelListHandler", func(t *testing.T) {
-		req, err := http.NewRequest("GET", "/v1/cluster-resources/report-labels?sources=kyverno", nil)
+		req, err := http.NewRequest("GET", "/v1/cluster-resources/report-labels?sources=Kyverno", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		rr := httptest.NewRecorder()
-		handler := v1.ClusterReportLabelListHandler(store)
+		handler := handl.ClusterReportLabelListHandler()
 		handler.ServeHTTP(rr, req)
 
 		if status := rr.Code; status != http.StatusOK {
@@ -502,13 +535,13 @@ func Test_V1_API(t *testing.T) {
 	})
 
 	t.Run("ClusterReportLabelListHandler", func(t *testing.T) {
-		req, err := http.NewRequest("GET", "/v1/namespaced-resources/report-labels?sources=kyverno", nil)
+		req, err := http.NewRequest("GET", "/v1/namespaced-resources/report-labels?sources=Kyverno", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		rr := httptest.NewRecorder()
-		handler := v1.NamespacedReportLabelListHandler(store)
+		handler := handl.NamespacedReportLabelListHandler()
 		handler.ServeHTTP(rr, req)
 
 		if status := rr.Code; status != http.StatusOK {
@@ -520,9 +553,51 @@ func Test_V1_API(t *testing.T) {
 			t.Errorf("handler returned unexpected body: got %v want %v", rr.Body.String(), expected)
 		}
 	})
+
+	t.Run("PolicyReportListHandler", func(t *testing.T) {
+		req, err := http.NewRequest("GET", "/v1/policy-reports?namespaces=test&labels=app:policy-reporter", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		rr := httptest.NewRecorder()
+		handler := handl.PolicyReportListHandler()
+		handler.ServeHTTP(rr, req)
+
+		if status := rr.Code; status != http.StatusOK {
+			t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
+		}
+
+		expected := `{"items":[{"id":"7605991845421273693","name":"polr-test","namespace":"test","source":"Kyverno","labels":{"app":"policy-reporter","scope":"namespace"},"pass":0,"skip":0,"warn":0,"error":0,"fail":1}],"count":1}`
+		if !strings.Contains(rr.Body.String(), expected) {
+			t.Errorf("handler returned unexpected body: got %v want %v", rr.Body.String(), expected)
+		}
+	})
+
+	t.Run("ClusterPolicyReportListHandler", func(t *testing.T) {
+		req, err := http.NewRequest("GET", "/v1/policy-reports?labels=app:policy-reporter", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		rr := httptest.NewRecorder()
+		handler := handl.ClusterPolicyReportListHandler()
+		handler.ServeHTTP(rr, req)
+
+		if status := rr.Code; status != http.StatusOK {
+			t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
+		}
+
+		expected := `{"items":[{"id":"7174304213499286261","name":"cpolr","source":"Kyverno","labels":{"app":"policy-reporter","scope":"cluster"},"pass":0,"skip":0,"warn":0,"error":0,"fail":0}],"count":1}`
+		if !strings.Contains(rr.Body.String(), expected) {
+			t.Errorf("handler returned unexpected body: got %v want %v", rr.Body.String(), expected)
+		}
+	})
 }
 
 func Test_TargetsAPI(t *testing.T) {
+	handl := v1.NewHandler(nil)
+
 	t.Run("Empty Respose", func(t *testing.T) {
 		req, err := http.NewRequest("GET", "/targets", nil)
 		if err != nil {
@@ -530,7 +605,7 @@ func Test_TargetsAPI(t *testing.T) {
 		}
 
 		rr := httptest.NewRecorder()
-		handler := v1.TargetsHandler(make([]target.Client, 0))
+		handler := handl.TargetsHandler(make([]target.Client, 0))
 
 		handler.ServeHTTP(rr, req)
 
@@ -551,7 +626,7 @@ func Test_TargetsAPI(t *testing.T) {
 		}
 
 		rr := httptest.NewRecorder()
-		handler := v1.TargetsHandler([]target.Client{
+		handler := handl.TargetsHandler([]target.Client{
 			loki.NewClient(loki.Options{
 				ClientOptions: target.ClientOptions{
 					Name:                  "Loki",

@@ -8,7 +8,7 @@ We truncate at 63 chars because some Kubernetes name fields are limited to this 
 If release name contains chart name it will be used as a full name.
 */}}
 {{- define "policyreporter.fullname" -}}
-{{- $name := .Chart.Name }}
+{{- $name := default .Chart.Name .Values.nameOverride }}
 {{- if .Values.global.fullnameOverride }}
 {{- .Values.global.fullnameOverride }}
 {{- else if contains $name .Release.Name }}
@@ -111,5 +111,14 @@ maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
     {{- .Values.global.namespace -}}
 {{- else -}}
     {{- .Release.Namespace -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Get the namespace name. */}}
+{{- define "policyreporter.logLevel" -}}
+{{- if .Values.api.logging -}}
+-1
+{{- else -}}
+{{- .Values.logging.logLevel -}}
 {{- end -}}
 {{- end -}}

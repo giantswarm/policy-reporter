@@ -3,12 +3,12 @@ package listener_test
 import (
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
+	ioprometheusclient "github.com/prometheus/client_model/go"
+
 	"github.com/kyverno/policy-reporter/pkg/listener"
 	"github.com/kyverno/policy-reporter/pkg/listener/metrics"
 	"github.com/kyverno/policy-reporter/pkg/report"
-
-	"github.com/prometheus/client_golang/prometheus"
-	ioprometheusclient "github.com/prometheus/client_model/go"
 )
 
 func Test_SimpleMetricsListener(t *testing.T) {
@@ -18,7 +18,7 @@ func Test_SimpleMetricsListener(t *testing.T) {
 	slistener := listener.NewMetricsListener(&report.ResultFilter{}, &report.ReportFilter{}, metrics.Simple, make([]string, 0))
 
 	t.Run("Add ClusterPolicyReport Metric", func(t *testing.T) {
-		slistener(report.LifecycleEvent{Type: report.Added, NewPolicyReport: creport, OldPolicyReport: report.PolicyReport{}})
+		slistener(report.LifecycleEvent{Type: report.Added, PolicyReport: creport})
 
 		metricFam, err := prometheus.DefaultGatherer.Gather()
 		if err != nil {
@@ -35,7 +35,7 @@ func Test_SimpleMetricsListener(t *testing.T) {
 		}
 	})
 	t.Run("Add PolicyReport Metric", func(t *testing.T) {
-		slistener(report.LifecycleEvent{Type: report.Added, NewPolicyReport: preport1, OldPolicyReport: report.PolicyReport{}})
+		slistener(report.LifecycleEvent{Type: report.Added, PolicyReport: preport1})
 
 		metricFam, err := prometheus.DefaultGatherer.Gather()
 		if err != nil {
@@ -56,12 +56,12 @@ func Test_SimpleMetricsListener(t *testing.T) {
 func Test_CustomMetricsListener(t *testing.T) {
 	listener.ResultGaugeName = "policy_report_custom_result"
 	listener.ClusterResultGaugeName = "cluster_policy_report_custom_result"
-	customFields := []string{"namespace", "policy", "status", "source", "label:app"}
+	customFields := []string{"namespace", "policy", "status", "source", "label:app", "property:xyz"}
 
 	slistener := listener.NewMetricsListener(&report.ResultFilter{}, &report.ReportFilter{}, metrics.Custom, customFields)
 
 	t.Run("Add ClusterPolicyReport Metric", func(t *testing.T) {
-		slistener(report.LifecycleEvent{Type: report.Added, NewPolicyReport: creport, OldPolicyReport: report.PolicyReport{}})
+		slistener(report.LifecycleEvent{Type: report.Added, PolicyReport: creport})
 
 		metricFam, err := prometheus.DefaultGatherer.Gather()
 		if err != nil {
@@ -78,7 +78,7 @@ func Test_CustomMetricsListener(t *testing.T) {
 		}
 	})
 	t.Run("Add PolicyReport Metric", func(t *testing.T) {
-		slistener(report.LifecycleEvent{Type: report.Added, NewPolicyReport: preport1, OldPolicyReport: report.PolicyReport{}})
+		slistener(report.LifecycleEvent{Type: report.Added, PolicyReport: preport1})
 
 		metricFam, err := prometheus.DefaultGatherer.Gather()
 		if err != nil {
@@ -103,7 +103,7 @@ func Test_MetricsListener(t *testing.T) {
 	slistener := listener.NewMetricsListener(&report.ResultFilter{}, &report.ReportFilter{}, metrics.Detailed, make([]string, 0))
 
 	t.Run("Add ClusterPolicyReport Metric", func(t *testing.T) {
-		slistener(report.LifecycleEvent{Type: report.Added, NewPolicyReport: creport, OldPolicyReport: report.PolicyReport{}})
+		slistener(report.LifecycleEvent{Type: report.Added, PolicyReport: creport})
 
 		metricFam, err := prometheus.DefaultGatherer.Gather()
 		if err != nil {
@@ -120,7 +120,7 @@ func Test_MetricsListener(t *testing.T) {
 		}
 	})
 	t.Run("Add PolicyReport Metric", func(t *testing.T) {
-		slistener(report.LifecycleEvent{Type: report.Added, NewPolicyReport: preport1, OldPolicyReport: report.PolicyReport{}})
+		slistener(report.LifecycleEvent{Type: report.Added, PolicyReport: preport1})
 
 		metricFam, err := prometheus.DefaultGatherer.Gather()
 		if err != nil {

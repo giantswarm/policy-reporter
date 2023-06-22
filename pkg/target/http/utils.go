@@ -5,12 +5,13 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
+	"time"
 
-	"github.com/kyverno/policy-reporter/pkg/report"
+	"go.uber.org/zap"
+
+	"github.com/kyverno/policy-reporter/pkg/crd/api/policyreport/v1alpha2"
 )
 
 // CreateJSONRequest for the given configuration
@@ -21,7 +22,7 @@ func CreateJSONRequest(target, method, host string, payload interface{}) (*http.
 
 	req, err := http.NewRequest(method, host, body)
 	if err != nil {
-		log.Printf("[ERROR] %s : %v\n", target, err.Error())
+		zap.L().Error(target+": PUSH FAILED", zap.Error(err))
 		return nil, err
 	}
 
@@ -40,36 +41,41 @@ func ProcessHTTPResponse(target string, resp *http.Response, err error) {
 	}()
 
 	if err != nil {
-		log.Printf("[ERROR] %s PUSH failed: %s\n", target, err.Error())
+		zap.L().Error(target+": PUSH FAILED", zap.Error(err))
 	} else if resp.StatusCode >= 400 {
-		fmt.Printf("StatusCode: %d\n", resp.StatusCode)
 		buf := new(bytes.Buffer)
 		buf.ReadFrom(resp.Body)
 
-		log.Printf("[ERROR] %s PUSH failed [%d]: %s\n", target, resp.StatusCode, buf.String())
+		zap.L().Error(target+": PUSH FAILED", zap.Int("statusCode", resp.StatusCode), zap.String("body", buf.String()))
 	} else {
-		log.Printf("[INFO] %s PUSH OK\n", target)
+		zap.L().Info(target + ": PUSH OK")
 	}
 }
 
-func NewJSONResult(r report.Result) Result {
+func NewJSONResult(r v1alpha2.PolicyReportResult) Result {
+	res := Resource{}
+	if r.HasResource() {
+		resOb := r.GetResource()
+
+		res.Namespace = resOb.Namespace
+		res.APIVersion = resOb.APIVersion
+		res.Kind = resOb.Kind
+		res.Name = resOb.Name
+		res.UID = string(resOb.UID)
+	}
 	return Result{
-		Message:  r.Message,
-		Policy:   r.Policy,
-		Rule:     r.Rule,
-		Priority: r.Priority.String(),
-		Status:   r.Status,
-		Severity: r.Severity,
-		Category: r.Category,
-		Scored:   r.Scored,
-		Resource: Resource{
-			Namespace:  r.Resource.Namespace,
-			APIVersion: r.Resource.APIVersion,
-			Kind:       r.Resource.Kind,
-			Name:       r.Resource.Name,
-			UID:        r.Resource.UID,
-		},
-		CreationTimestamp: r.Timestamp,
+		Message:           r.Message,
+		Policy:            r.Policy,
+		Rule:              r.Rule,
+		Priority:          r.Priority.String(),
+		Status:            string(r.Result),
+		Severity:          string(r.Severity),
+		Category:          r.Category,
+		Scored:            r.Scored,
+		Properties:        r.Properties,
+		Resource:          res,
+		CreationTimestamp: time.Unix(r.Timestamp.Seconds, int64(r.Timestamp.Nanos)),
+		Source:            r.Source,
 	}
 }
 
@@ -86,7 +92,7 @@ func NewClient(certificatePath string, skipTLS bool) *http.Client {
 	if certificatePath != "" {
 		caCert, err := ioutil.ReadFile(certificatePath)
 		if err != nil {
-			log.Printf("[ERROR] failed to read certificate: %s\n", certificatePath)
+			zap.L().Error("failed to read certificate", zap.String("path", certificatePath))
 			return client
 		}
 

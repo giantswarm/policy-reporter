@@ -3,13 +3,19 @@ package helper
 import (
 	"bytes"
 	"io"
-	"log"
+	"os"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/credentials/ec2rolecreds"
+	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
+	"github.com/aws/aws-sdk-go/aws/ec2metadata"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/kinesis"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/aws/aws-sdk-go/service/securityhub"
+	"github.com/aws/aws-sdk-go/service/sts"
+	"go.uber.org/zap"
 )
 
 type AWSClient interface {
@@ -18,40 +24,63 @@ type AWSClient interface {
 }
 
 type s3Client struct {
-	bucket   string
-	uploader *s3manager.Uploader
+	bucket               string
+	uploader             *s3manager.Uploader
+	bucketKeyEnabled     *bool
+	kmsKeyID             *string
+	serverSideEncryption *string
+}
+
+type Options func(s *s3Client)
+
+func WithKMS(bucketKeyEnabled *bool, kmsKeyID, serverSideEncryption *string) Options {
+	return func(s *s3Client) {
+		s.bucketKeyEnabled = bucketKeyEnabled
+		if *kmsKeyID != "" {
+			s.kmsKeyID = kmsKeyID
+		}
+
+		if *serverSideEncryption != "" {
+			s.serverSideEncryption = serverSideEncryption
+		}
+	}
 }
 
 func (s *s3Client) Upload(body *bytes.Buffer, key string) error {
 	_, err := s.uploader.Upload(&s3manager.UploadInput{
-		Bucket: aws.String(s.bucket),
-		Key:    aws.String(key),
-		Body:   body,
+		Bucket:               aws.String(s.bucket),
+		Key:                  aws.String(key),
+		Body:                 body,
+		BucketKeyEnabled:     s.bucketKeyEnabled,
+		SSEKMSKeyId:          s.kmsKeyID,
+		ServerSideEncryption: s.serverSideEncryption,
 	})
 	return err
 }
 
 // NewS3Client creates a new S3.client to send Results to S3
-func NewS3Client(accessKeyID, secretAccessKey, region, endpoint, bucket string, pathStyle bool) AWSClient {
-	config := &aws.Config{
-		Region:      aws.String(region),
-		Endpoint:    aws.String(endpoint),
-		Credentials: credentials.NewStaticCredentials(accessKeyID, secretAccessKey, ""),
-	}
+func NewS3Client(accessKeyID, secretAccessKey, region, endpoint, bucket string, pathStyle bool, opts ...Options) AWSClient {
+	config := createConfig(accessKeyID, secretAccessKey, region, endpoint)
 	if pathStyle {
 		config.S3ForcePathStyle = &pathStyle
 	}
 
 	sess, err := session.NewSession(config)
 	if err != nil {
-		log.Printf("[ERROR]: %v\n", "Error while creating S3 Session")
+		zap.L().Error("error while creating S3 session")
 		return nil
 	}
 
-	return &s3Client{
-		bucket,
-		s3manager.NewUploader(sess),
+	s3Client := &s3Client{
+		bucket:   bucket,
+		uploader: s3manager.NewUploader(sess),
 	}
+
+	for _, opt := range opts {
+		opt(s3Client)
+	}
+
+	return s3Client
 }
 
 type kinesisClient struct {
@@ -75,18 +104,69 @@ func (k *kinesisClient) Upload(body *bytes.Buffer, key string) error {
 
 // NewKinesisClient creates a new S3.client to send Results to S3
 func NewKinesisClient(accessKeyID, secretAccessKey, region, endpoint, streamName string) AWSClient {
-	sess, err := session.NewSession(&aws.Config{
-		Region:      aws.String(region),
-		Endpoint:    aws.String(endpoint),
-		Credentials: credentials.NewStaticCredentials(accessKeyID, secretAccessKey, ""),
-	})
+	config := createConfig(accessKeyID, secretAccessKey, region, endpoint)
+
+	sess, err := session.NewSession(config)
 	if err != nil {
-		log.Printf("[ERROR]: %v\n", "Error while creating S3 Session")
+		zap.L().Error("error while creating Kinesis session")
 		return nil
 	}
 
 	return &kinesisClient{
 		streamName,
 		kinesis.New(sess),
+	}
+}
+
+// NewHubClient creates a new SecurityHub client to send finding events
+func NewHubClient(accessKeyID, secretAccessKey, region, endpoint string) *securityhub.SecurityHub {
+	config := createConfig(accessKeyID, secretAccessKey, region, endpoint)
+
+	sess, err := session.NewSession(config)
+	if err != nil {
+		zap.L().Error("error while creating SecurityHub session")
+		return nil
+	}
+
+	optional := make([]*aws.Config, 0)
+	if endpoint != "" {
+		optional = append(optional, aws.NewConfig().WithEndpoint(endpoint))
+	}
+
+	return securityhub.New(sess, optional...)
+}
+
+func createConfig(accessKeyID, secretAccessKey, region, endpoint string) *aws.Config {
+	baseConfig := &aws.Config{}
+	if endpoint != "" {
+		baseConfig.Endpoint = aws.String(endpoint)
+	}
+	if region != "" {
+		baseConfig.Region = aws.String(region)
+	}
+
+	sess := session.Must(session.NewSession(baseConfig))
+
+	return &aws.Config{
+		Region:   baseConfig.Region,
+		Endpoint: baseConfig.Endpoint,
+		Credentials: credentials.NewChainCredentials([]credentials.Provider{
+			&credentials.StaticProvider{
+				Value: credentials.Value{
+					AccessKeyID:     accessKeyID,
+					SecretAccessKey: secretAccessKey,
+				},
+			},
+			&credentials.EnvProvider{},
+			stscreds.NewWebIdentityRoleProvider(
+				sts.New(sess),
+				os.Getenv("AWS_ROLE_ARN"),
+				"",
+				os.Getenv("AWS_WEB_IDENTITY_TOKEN_FILE"),
+			),
+			&ec2rolecreds.EC2RoleProvider{
+				Client: ec2metadata.New(sess),
+			},
+		}),
 	}
 }
